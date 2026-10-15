@@ -1,0 +1,100 @@
+volumes:
+  postgres-data:
+  redis-data: 
+networks:
+  frontend:
+  backend:
+services:
+  web-app:
+    container_name: web-app
+    build: ./web-app
+    networks:
+      - frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file: ./.env
+    ports:
+      - "80:5000"
+    restart: unless-stopped
+    healthcheck:
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      test: ["CMD", "python", "-c", "import urllib.request;
+        urllib.request.urlopen('http://localhost:5000/health', timeout = 4).close()"]
+
+  api:
+    container_name: api
+    build: ./api
+    networks:
+      - frontend
+      - backend
+    ports:
+      - "8080:8080"
+    env_file: ./.env
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+      test: ["CMD", "python", "-c", "import urllib.request;
+        urllib.request.urlopen('http://localhost:8080/health', timeout = 4).close()"]
+  database:
+    container_name: db
+    image: postgres:18-alpine
+    env_file: ./.env
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./init-scripts/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+
+  pgweb:
+    container_name: pgweb
+    image: sosedoff/pgweb:0.17.0
+    networks:
+      - backend
+    env_file: ./.env
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      test: ["CMD", "curl", "-f", "http://localhost:8081/api/info"]
+
+  redis:
+    container_name: redis
+    image: redis:8-alpine
+    env_file: ./.env
+    networks:
+      - backend
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--requirepass" ,"${REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD-SHELL","redis-cli -a \"$$REDIS_PASSWORD\" ping" ]
+      interval: 10s
+      timeout: 3s 
+      retries: 3
